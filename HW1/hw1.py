@@ -20,8 +20,8 @@ def load_corpus(corpus_path):
     with open(corpus_path, 'r') as raw_data:
         for line in raw_data:
             words = line.split()
-            class_ = words.pop()
-            dataset.append((words,class_))
+            label = words.pop()
+            dataset.append((words,label))
 
     # what about ' like rock's ! ----------------------------- ?
     return dataset
@@ -69,15 +69,20 @@ def tag_negation(snippet):
 
     return negated_snippet
 
-                
-
-
 
 # Assigns to each unigram an index in the feature vector
 # corpus is a list of tuples (snippet, label)
 # Returns a dictionary {word: index}
 def get_feature_dictionary(corpus):
-    pass
+    counter = 0
+    corpus_dict = {}
+    for snippet, label in corpus:
+        for word in snippet:
+            if not word in corpus_dict.keys():
+                corpus_dict[word] = counter 
+                counter += 1
+
+    return corpus_dict
     
 
 # Converts a snippet into a feature vector
@@ -85,7 +90,10 @@ def get_feature_dictionary(corpus):
 # feature_dict is a dictionary {word: index}
 # Returns a Numpy array
 def vectorize_snippet(snippet, feature_dict):
-    pass
+    feature_vector = numpy.zeros(len(feature_dict))
+    for word in snippet:
+        feature_vector[feature_dict[word]] += 1
+    return feature_vector
 
 
 # Trains a classification model (in-place)
@@ -93,14 +101,25 @@ def vectorize_snippet(snippet, feature_dict):
 # feature_dict is a dictionary {word: label}
 # Returns a tuple (X, Y) where X and Y are Numpy arrays
 def vectorize_corpus(corpus, feature_dict):
-    pass
+    X = numpy.empty((len(corpus), len(feature_dict)))
+    Y = numpy.empty(len(corpus))
+    for i, (snippet, label) in enumerate(corpus):
+        X[i, :] = vectorize_snippet(snippet, feature_dict)
+        Y[i] = label
+    
+    return (X,Y)
+
 
 
 # Performs min-max normalization (in-place)
 # X is a Numpy array
 # No return value
 def normalize(X):
-    pass
+    for i in range(X.shape[1]):
+        min_value = numpy.min(X[:, i])
+        max_value = numpy.max(X[:, i])
+
+        X[:, i] = (X[:, i] - min_value) / (max_value -  min_value)
 
 
 # Trains a model on a training corpus
@@ -135,6 +154,7 @@ def get_top_features(logreg_model, feature_dict, k=1):
 
 
 def main(args):
+            
     model, feature_dict = train('train.txt')
 
     print(test(model, feature_dict, 'test.txt'))
