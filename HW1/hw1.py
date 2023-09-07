@@ -2,6 +2,7 @@ import re
 import sys
 
 import nltk
+nltk.download('averaged_perceptron_tagger')
 import numpy
 from sklearn.linear_model import LogisticRegression
 
@@ -15,21 +16,61 @@ sentence_enders = set(['.', '?', '!', ';'])
 # corpus_path is a string
 # Returns a list of (string, int) tuples
 def load_corpus(corpus_path):
-    pass
+    dataset = []
+    with open(corpus_path, 'r') as raw_data:
+        for line in raw_data:
+            words = line.split()
+            class_ = words.pop()
+            dataset.append((words,class_))
+
+    # what about ' like rock's ! ----------------------------- ?
+    return dataset
 
 
 # Checks whether or not a word is a negation word
 # word is a string
 # Returns a boolean
 def is_negation(word):
-    pass
+    if word in negation_words:
+        return True
+    return True if word.endswith("n't") else False
 
 
 # Modifies a snippet to add negation tagging
 # snippet is a list of strings
 # Returns a list of strings
 def tag_negation(snippet):
-    pass
+    sentence = " ".join(snippet)
+    tokens_tag = nltk.pos_tag(snippet)
+
+    negation_flag = False
+    negated_snippet = []
+    for token, tag in tokens_tag:
+        if token == 'only' and negated_snippet[-1] == 'not':
+                negated_snippet.append(token)
+                negation_flag = False
+        elif is_negation(token):
+            negation_flag = True
+            if token.endswith("n't"):
+                negated_snippet.append(token[:-3])
+                negated_snippet.append("n't")
+            else:
+                negated_snippet.append(token)
+        
+        elif token in (negation_enders or sentence_enders) or tag in ['JJR', 'RBR']:
+            negation_flag = False
+            negated_snippet.append(token)
+
+        else:
+            if negation_flag:
+                negated_snippet.append('NOT_'+token)
+            else:
+                negated_snippet.append(token)
+
+    return negated_snippet
+
+                
+
 
 
 # Assigns to each unigram an index in the feature vector
@@ -104,4 +145,3 @@ def main(args):
     
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))
-
