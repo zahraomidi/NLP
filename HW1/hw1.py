@@ -2,7 +2,6 @@ import re
 import sys
 
 import nltk
-nltk.download('averaged_perceptron_tagger')
 import numpy
 from sklearn.linear_model import LogisticRegression
 
@@ -20,10 +19,8 @@ def load_corpus(corpus_path):
     with open(corpus_path, 'r') as raw_data:
         for line in raw_data:
             words = line.split()
-            label = words.pop()
+            label = int(words.pop())
             dataset.append((words,label))
-
-    # what about ' like rock's ! ----------------------------- ?
     return dataset
 
 
@@ -40,13 +37,13 @@ def is_negation(word):
 # snippet is a list of strings
 # Returns a list of strings
 def tag_negation(snippet):
-    sentence = " ".join(snippet)
     tokens_tag = nltk.pos_tag(snippet)
 
     negation_flag = False
     negated_snippet = []
     for token, tag in tokens_tag:
-        if token == 'only' and negated_snippet[-1] == 'not':
+        if token == 'only' and len(negated_snippet)>=1:
+            if negated_snippet[-1] == 'not':
                 negated_snippet.append(token)
                 negation_flag = False
         elif is_negation(token):
@@ -92,7 +89,8 @@ def get_feature_dictionary(corpus):
 def vectorize_snippet(snippet, feature_dict):
     feature_vector = numpy.zeros(len(feature_dict))
     for word in snippet:
-        feature_vector[feature_dict[word]] += 1
+        if word in feature_dict.keys():
+            feature_vector[feature_dict[word]] += 1
     return feature_vector
 
 
@@ -106,9 +104,7 @@ def vectorize_corpus(corpus, feature_dict):
     for i, (snippet, label) in enumerate(corpus):
         X[i, :] = vectorize_snippet(snippet, feature_dict)
         Y[i] = label
-    
     return (X,Y)
-
 
 
 # Performs min-max normalization (in-place)
@@ -118,15 +114,25 @@ def normalize(X):
     for i in range(X.shape[1]):
         min_value = numpy.min(X[:, i])
         max_value = numpy.max(X[:, i])
-
-        X[:, i] = (X[:, i] - min_value) / (max_value -  min_value)
+        if (max_value -  min_value) > 0:
+            X[:, i] = (X[:, i] - min_value) / (max_value -  min_value)
 
 
 # Trains a model on a training corpus
 # corpus_path is a string
 # Returns a LogisticRegression
 def train(corpus_path):
-    pass
+    train_data = load_corpus(corpus_path)
+    for i, (sen, c) in enumerate(train_data):
+        train_data[i] = (tag_negation(sen), c)
+    feature_dictionary = get_feature_dictionary(train_data) 
+    x, y = vectorize_corpus(train_data, feature_dictionary)
+    normalize(X=x)
+
+    model = LogisticRegression()
+    model.fit(x, y)
+
+    return (model, feature_dictionary)
 
 
 # Calculate precision, recall, and F-measure
@@ -134,7 +140,16 @@ def train(corpus_path):
 # Y_test is a Numpy array
 # Returns a tuple of floats
 def evaluate_predictions(Y_pred, Y_test):
-    pass
+
+    tp = numpy.sum([(Y_pred[i]==Y_test[i]==1) for i in range(len(Y_test))])
+    fp = numpy.sum([Y_pred[i]==1 and Y_test[i]==0 for i in range(len(Y_test))])
+    fn = numpy.sum([Y_pred[i]==0 and Y_test[i]==1 for i in range(len(Y_test))])
+
+    precision = tp / (tp + fp)
+    recall = tp / (tp + fn)
+    f_measure = 2 * (precision*recall / (precision+recall))
+
+    return (precision, recall, f_measure)
 
 
 # Evaluates a model on a test corpus and prints the results
@@ -142,7 +157,13 @@ def evaluate_predictions(Y_pred, Y_test):
 # corpus_path is a string
 # Returns a tuple of floats
 def test(model, feature_dict, corpus_path):
-    pass
+    test_data = load_corpus(corpus_path)
+    for i, (sen, c) in enumerate(test_data):
+        test_data[i] = (tag_negation(sen), c)
+    test_x, test_y = vectorize_corpus(test_data, feature_dict)
+    normalize(X=test_x)
+    y_pred = model.predict(test_x)
+    return evaluate_predictions(y_pred, test_y)
 
 
 # Selects the top k highest-weight features of a logistic regression model
@@ -150,16 +171,18 @@ def test(model, feature_dict, corpus_path):
 # feature_dict is a dictionary {word: index}
 # k is an int
 def get_top_features(logreg_model, feature_dict, k=1):
-    pass
+    coefficients = logreg_model.coef_[0]
+    sorted_features = sorted(list(enumerate(coefficients)), key=lambda x: abs(float(x[1])), reverse=True)
+    top_features = [(list(feature_dict.keys())[list(feature_dict.values()).index(idx)], weight) for idx, weight in sorted_features[:k]]
+    
+    return top_features
 
 
 def main(args):
-            
     model, feature_dict = train('train.txt')
-
     print(test(model, feature_dict, 'test.txt'))
 
-    weights = get_top_features(model, feature_dict)
+    weights = get_top_features(model, feature_dict, 15)
     for weight in weights:
         print(weight)
     
