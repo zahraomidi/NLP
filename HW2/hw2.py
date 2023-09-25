@@ -5,6 +5,7 @@ from nltk.corpus import brown
 import numpy
 from scipy.sparse import csr_matrix
 from sklearn.linear_model import LogisticRegression
+
 # Load the Brown corpus with Universal Dependencies tags
 # proportion is a float
 # Returns a tuple of lists (sents, tags)
@@ -23,14 +24,60 @@ def load_training_corpus(proportion=1.0):
 # i is an int
 # Returns a list of strings
 def get_ngram_features(words, i):
-    pass
+    n = len(words)
+    prev_word = '<s>' if i - 1 < 0 else words[i - 1]
+    next_word = '</s>' if i + 1 >= n else words[i + 1]
+    prev_skip = '<s>' if i - 2 < 0 else words[i - 2]
+    next_skip = '</s>' if i + 2 >= n else words[i + 2]
+
+    features = [
+        f'prevbigram-{prev_word}',
+        f'nextbigram-{next_word}',
+        f'prevskip-{prev_skip}',
+        f'nextskip-{next_skip}',
+        f'prevtrigram-{prev_word}-{prev_skip}',
+        f'nexttrigram-{next_word}-{next_skip}',
+        f'centertrigram-{prev_skip}-{next_word}'
+    ]
+
+    return features
 
 
 # Generate word-based features
 # word is a string
 # returns a list of strings
 def get_word_features(word):
-    pass
+    features = []
+
+    features.append(f'word-{word}')
+
+    if word.isupper():
+        features.append('allcaps')
+    elif word[0].isupper():
+        features.append('capital')
+
+    word_shape = ''.join(['X' if c.isupper() else 'x' if c.islower() else 'd' if c.isdigit() else c for c in word])
+    features.append(f'wordshape-{word_shape}')
+
+    short_word_shape = ''.join(['' if i>=1 and c==word_shape[i-1] else c for i,c in enumerate(word_shape)])
+    features.append(f'short-wordshape-{short_word_shape}')
+
+    if any(c.isdigit() for c in word):
+        features.append('number')
+
+    if '-' in word:
+        features.append('hyphen')
+    
+
+    for i in range(1,5):
+        if i <= len(word):
+            features.append(f'prefix{i}-{word[:i]}')
+
+    for i in range(1,5):
+        if i <= len(word):
+            features.append(f'suffix{i}-{word[-i:]}')
+
+    return features
 
 
 # Wrapper function for get_ngram_features and get_word_features
@@ -39,7 +86,10 @@ def get_word_features(word):
 # prevtag is a string
 # Returns a list of strings
 def get_features(words, i, prevtag):
-    pass
+    features = get_ngram_features(words, i) + get_word_features(words[i])
+    features.append(f'tagbigram-{prevtag}')
+    features = [f.lower() if not f.startswith('wordshape') or f.startswith('short-wordshape') else f  for f in features]
+    return features
 
 
 # Remove features that occur fewer than a given threshold number of time
