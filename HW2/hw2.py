@@ -1,6 +1,8 @@
 import sys
 
 import nltk
+# nltk.download('brown')
+# nltk.download('universal_tagset')
 from nltk.corpus import brown
 import numpy
 from scipy.sparse import csr_matrix
@@ -97,7 +99,22 @@ def get_features(words, i, prevtag):
 # threshold is an int
 # Returns a tuple (corpus_features, common_features)
 def remove_rare_features(corpus_features, threshold=5):
-    pass
+    feature_count = {}
+    for sentence in corpus_features:
+        for word in sentence:
+            for feature in word:
+                if not feature in feature_count:
+                    feature_count[feature] = 0
+                feature_count[feature] += 1
+
+    rare_features = set([feature for feature, count in feature_count.items() if count < threshold])
+    common_features = set([feature for feature in feature_count if not feature in rare_features])
+
+    for i, sentence in enumerate(corpus_features):
+        for j, word in enumerate(sentence):
+            corpus_features[i][j] = [feature for feature in word if feature in common_features]
+
+    return corpus_features, common_features
 
 
 # Build feature and tag dictionaries
@@ -105,28 +122,71 @@ def remove_rare_features(corpus_features, threshold=5):
 # corpus_tags is a list of lists of strings (tags)
 # Returns a tuple (feature_dict, tag_dict)
 def get_feature_and_label_dictionaries(common_features, corpus_tags):
-    pass
+    feature_dict = {feature: index for index, feature in enumerate(common_features)}
+
+    tags = set(tag for sentence_tags in corpus_tags for tag in sentence_tags)
+    tag_dict = {tag: index for index, tag in enumerate(tags)}
+
+    return feature_dict, tag_dict
 
 # Build the label vector Y
 # corpus_tags is a list of lists of strings (tags)
 # tag_dict is a dictionary {string: int}
 # Returns a Numpy array
 def build_Y(corpus_tags, tag_dict):
-    pass
+    result = []
+    for sentence_tags in corpus_tags:
+        for word_tag in sentence_tags:
+            result.append(tag_dict[word_tag])
+    
+    return numpy.array(result)
 
 # Build a sparse input matrix X
 # corpus_features is a list of lists, where each sublist corresponds to a sentence and has elements that are lists of strings (feature names)
 # feature_dict is a dictionary {string: int}
 # Returns a Scipy.sparse csr_matrix
 def build_X(corpus_features, feature_dict):
-    pass
+    sample_count = 0
+    rows = []
+    cols = []
+    values = []
+    for sentence in corpus_features:
+        for word in sentence:
+            for feature in word:
+                if feature in feature_dict:
+                    rows.append(sample_count)
+                    cols.append(feature_dict[feature])
+                    values.append(1)
+            sample_count += 1
+    X = csr_matrix((values, (numpy.array(rows), numpy.array(cols))), shape=(sample_count, len(feature_dict)))
+    return X
 
 
 # Train an MEMM tagger on the Brown corpus
 # proportion is a float
 # Returns a tuple (model, feature_dict, tag_dict)
 def train(proportion=1.0):
-    pass
+    corpus_features = []
+    corpus_sents, corpus_tags = load_training_corpus(proportion)
+    for sentence in corpus_sents:
+        sentence_features = []
+        for j, word in enumerate(sentence):
+            if j == 0:
+                prevtag = '<S>'
+            else:
+                prevtag = corpus_tags[j - 1]
+            sentence_features.append(get_features(sentence, j, prevtag))
+        corpus_features.append(sentence_features)
+
+    corpus_features, common_features = remove_rare_features(corpus_features)
+
+    feature_dict, tag_dict = get_feature_and_label_dictionaries(common_features, corpus_tags)
+    X = build_X(corpus_features, feature_dict)
+    Y = build_Y(corpus_tags, tag_dict)
+    model = LogisticRegression(class_weight='balanced', solver='saga', multi_class='multinomial')
+    model.fit(X, Y)
+
+    return model, feature_dict, tag_dict
 
 
 
@@ -146,7 +206,22 @@ def load_test_corpus(corpus_path):
 # reverse_tag_dict is a dictionary {int: string}
 # Returns a tuple (Y_start, Y_pred)
 def get_predictions(test_sent, model, feature_dict, reverse_tag_dict):
-    pass
+    Y_pred = numpy.empty((len(test_sent[0])-1, len(reverse_tag_dict), len(reverse_tag_dict)))
+    for i, word in enumerate(test_sent[0]):
+        if i > 0 :
+            features = []
+            for index, tag in reverse_tag_dict.items():
+                features.append(get_features(test_sent[0], i, tag))
+            X = build_X([features], feature_dict)  
+            log_probabilities = model.predict_log_proba(X)
+            Y_pred[i - 1] = log_probabilities
+    
+    prevtag = '<S>'
+    features = get_features(test_sent[0], 0, prevtag)
+    X = build_X([[features]], feature_dict) # T × F
+    Y_start = model.predict_log_proba(X) # T × T
+
+    return Y_start, Y_pred
 
 
 # Perform Viterbi decoding using predicted log probabilities
@@ -154,7 +229,33 @@ def get_predictions(test_sent, model, feature_dict, reverse_tag_dict):
 # Y_pred is a Numpy array of size (n-1, T, T)
 # Returns a list of strings (tags)
 def viterbi(Y_start, Y_pred):
-    pass
+    n = Y_pred.shape[0]+1
+    T = Y_start.shape[1]
+    V = numpy.empty((n, T))
+    BP = numpy.empty((n, T))
+    V[0] = Y_start
+    for i in range(1, n):
+        for j in range(T):
+            max_prob = -numpy.inf
+            max_backpointer = -1
+
+            for t2 in range(T):
+                prob = V[i - 1, t2] + Y_pred[i - 1, t2, j]
+                if prob > max_prob:
+                    max_prob = prob
+                    max_backpointer = t2
+
+            V[i, j] = max_prob
+            BP[i, j] = max_backpointer
+
+    tag_sequence = []
+    max_prob_index = numpy.argmax(V[n - 1]) 
+    for i in range(n - 1, 0, -1):
+        tag_sequence.append(max_prob_index)
+        max_prob_index = numpy.argmax(V[i])
+        
+    tag_sequence.reverse()
+    return tag_sequence
 
 
 # Predict tags for a test corpus using a trained model
@@ -164,7 +265,17 @@ def viterbi(Y_start, Y_pred):
 # tag_dict is a dictionary {string: int}
 # Returns a list of lists of strings (tags)
 def predict(corpus_path, model, feature_dict, tag_dict):
-    pass
+    test_corpus = load_test_corpus(corpus_path)
+    reverse_tag_dict = {v: k for k, v in tag_dict.items()}
+    predicted_tags_corpus = []
+    for test_sentence in test_corpus:
+        Y_start, Y_pred = get_predictions([test_sentence], model, feature_dict, reverse_tag_dict)
+        predicted_tag_indices = viterbi(Y_start, Y_pred)
+        predicted_tags = [reverse_tag_dict[i] for i in predicted_tag_indices]
+        predicted_tags_corpus.append(predicted_tags)
+
+    return predicted_tags_corpus
+
 
 
 def main(args):
