@@ -18,6 +18,7 @@ def load_training_corpus(proportion=1.0):
     corpus_sents, corpus_tags = [None] * num_used, [None] * num_used
     for i in range(num_used):
         corpus_sents[i], corpus_tags[i] = zip(*brown_sentences[i])
+    
     return (corpus_sents, corpus_tags)
 
 
@@ -90,7 +91,7 @@ def get_word_features(word):
 def get_features(words, i, prevtag):
     features = get_ngram_features(words, i) + get_word_features(words[i])
     features.append(f'tagbigram-{prevtag}')
-    features = [f.lower() if not f.startswith('wordshape') or f.startswith('short-wordshape') else f  for f in features]
+    features = [f.lower() if not (f.startswith('wordshape') or f.startswith('short-wordshape')) else f for f in features]
     return features
 
 
@@ -114,7 +115,7 @@ def remove_rare_features(corpus_features, threshold=5):
         for j, word in enumerate(sentence):
             corpus_features[i][j] = [feature for feature in word if feature in common_features]
 
-    return corpus_features, common_features
+    return (corpus_features, common_features)
 
 
 # Build feature and tag dictionaries
@@ -123,11 +124,10 @@ def remove_rare_features(corpus_features, threshold=5):
 # Returns a tuple (feature_dict, tag_dict)
 def get_feature_and_label_dictionaries(common_features, corpus_tags):
     feature_dict = {feature: index for index, feature in enumerate(common_features)}
-
     tags = set(tag for sentence_tags in corpus_tags for tag in sentence_tags)
     tag_dict = {tag: index for index, tag in enumerate(tags)}
 
-    return feature_dict, tag_dict
+    return (feature_dict, tag_dict)
 
 # Build the label vector Y
 # corpus_tags is a list of lists of strings (tags)
@@ -168,25 +168,24 @@ def build_X(corpus_features, feature_dict):
 def train(proportion=1.0):
     corpus_features = []
     corpus_sents, corpus_tags = load_training_corpus(proportion)
-    for sentence in corpus_sents:
+    for sentence, sentence_tags in zip(corpus_sents, corpus_tags):
         sentence_features = []
         for j, word in enumerate(sentence):
             if j == 0:
                 prevtag = '<S>'
             else:
-                prevtag = corpus_tags[j - 1]
+                prevtag = sentence_tags[j - 1]
             sentence_features.append(get_features(sentence, j, prevtag))
         corpus_features.append(sentence_features)
 
     corpus_features, common_features = remove_rare_features(corpus_features)
-
     feature_dict, tag_dict = get_feature_and_label_dictionaries(common_features, corpus_tags)
     X = build_X(corpus_features, feature_dict)
     Y = build_Y(corpus_tags, tag_dict)
     model = LogisticRegression(class_weight='balanced', solver='saga', multi_class='multinomial')
     model.fit(X, Y)
 
-    return model, feature_dict, tag_dict
+    return (model, feature_dict, tag_dict)
 
 
 
@@ -207,21 +206,20 @@ def load_test_corpus(corpus_path):
 # Returns a tuple (Y_start, Y_pred)
 def get_predictions(test_sent, model, feature_dict, reverse_tag_dict):
     Y_pred = numpy.empty((len(test_sent[0])-1, len(reverse_tag_dict), len(reverse_tag_dict)))
-    for i, word in enumerate(test_sent[0]):
-        if i > 0 :
-            features = []
-            for index, tag in reverse_tag_dict.items():
-                features.append(get_features(test_sent[0], i, tag))
-            X = build_X([features], feature_dict)  
-            log_probabilities = model.predict_log_proba(X)
-            Y_pred[i - 1] = log_probabilities
+    for i in range(1, len(test_sent[0])):
+        features = []
+        for index, tag in reverse_tag_dict.items(): # tag is prev_tag!
+            features.append(get_features(test_sent[0], i, tag))
+        X = build_X([features], feature_dict)  
+        log_probabilities = model.predict_log_proba(X)
+        Y_pred[i - 1] = log_probabilities
     
     prevtag = '<S>'
     features = get_features(test_sent[0], 0, prevtag)
     X = build_X([[features]], feature_dict) # T × F
     Y_start = model.predict_log_proba(X) # T × T
 
-    return Y_start, Y_pred
+    return (Y_start, Y_pred)
 
 
 # Perform Viterbi decoding using predicted log probabilities
@@ -230,30 +228,32 @@ def get_predictions(test_sent, model, feature_dict, reverse_tag_dict):
 # Returns a list of strings (tags)
 def viterbi(Y_start, Y_pred):
     n = Y_pred.shape[0]+1
-    T = Y_start.shape[1]
+    T = Y_pred.shape[1]
     V = numpy.empty((n, T))
     BP = numpy.empty((n, T))
     V[0] = Y_start
-    for i in range(1, n):
-        for j in range(T):
+    for i in range(1, n):                   # for each word
+        for t in range(T):                  # for each tag
             max_prob = -numpy.inf
             max_backpointer = -1
 
-            for t2 in range(T):
-                prob = V[i - 1, t2] + Y_pred[i - 1, t2, j]
+            for t_prime in range(T):
+                prob = V[i - 1, t_prime] + Y_pred[i - 1, t_prime, t]
                 if prob > max_prob:
                     max_prob = prob
-                    max_backpointer = t2
+                    max_backpointer = t_prime
 
-            V[i, j] = max_prob
-            BP[i, j] = max_backpointer
+            V[i, t] = max_prob
+            BP[i, t] = max_backpointer
 
     tag_sequence = []
-    max_prob_index = numpy.argmax(V[n - 1]) 
-    for i in range(n - 1, 0, -1):
-        tag_sequence.append(max_prob_index)
-        max_prob_index = numpy.argmax(V[i])
-        
+    t_hat = numpy.max(BP[n-1])
+    x = numpy.argmax(V[n-1])               # base case
+    tag_sequence.append(int(x))
+    for i in range(n - 2, -1, -1):
+        t_hat = BP[i+1, int(t_hat)]
+        tag_sequence.append(int(t_hat))
+    
     tag_sequence.reverse()
     return tag_sequence
 
@@ -280,8 +280,8 @@ def predict(corpus_path, model, feature_dict, tag_dict):
 
 def main(args):
     model, feature_dict, tag_dict = train(0.25)
-
     predictions = predict('test.txt', model, feature_dict, tag_dict)
+
     for test_sent in predictions:
         print(test_sent)
 
